@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shopify Brand Insights</title>
+  <style>
+    :root { --fg:#0f172a; --muted:#64748b; --bg:#f8fafc; --card:#ffffff; --code:#0b1020; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, Arial, sans-serif; color: var(--fg); background: var(--bg);
+           max-width: 960px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    .card { background: var(--card); border-radius: 12px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,.05); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row > * { flex: 0 0 auto; }
+    .row .grow { flex: 1 1 320px; }
+    input[type="url"], input[type="number"] {
+      width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 16px;
+    }
+    button { padding: 10px 14px; border-radius: 8px; border: 1px solid #0ea5e9; background: #0ea5e9;
+             color: white; font-size: 15px; cursor: pointer; }
+    button.secondary { background: white; color: #0ea5e9; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    label { font-size: 14px; }
+    pre { background: var(--code); color: #f1f5f9; padding: 16px; border-radius: 10px; overflow: auto; }
+    .status { font-size: 14px; margin: 8px 0 0; min-height: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Shopify Brand Insights</h1>
+  <p class="muted">Paste a Shopify storefront URL, then choose an action. No official Shopify API is used.</p>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="row">
+      <input id="url" class="grow" type="url" placeholder="https://memy.co.in" />
+      <button id="btnFetch">Fetch brand</button>
+      <button id="btnSave" class="secondary" title="Fetch & persist to DB">Fetch + Save</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnCompStrict">Competitors (strict)</button>
+      <button id="btnCompLoose" class="secondary">Competitors (loose)</button>
+      <label>
+        Limit
+        <input id="limit" type="number" min="1" max="12" value="3" style="width:80px;margin-left:6px">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input id="loose" type="checkbox"> loose
+      </label>
+    </div>
+    <div id="status" class="status muted"></div>
+  </div>
+
+  <pre id="out">Waiting…</pre>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+    const out = $('#out');
+    const statusEl = $('#status');
+
+    function setBusy(b) {
+      for (const id of ['#btnFetch', '#btnSave', '#btnCompStrict', '#btnCompLoose']) {
+        const el = $(id); if (el) el.disabled = b;
+      }
+    }
+    function pretty(data) { return JSON.stringify(data, null, 2); }
+    function getUrl() { return $('#url').value.trim(); }
+    function getLimit() { return Math.max(1, Number($('#limit').value || 3)); }
+    function getLoose() { return $('#loose').checked; }
+
+    async function postJSON(path, body) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        return { ok: res.ok, data: json, status: res.status };
+      } catch {
+        return { ok: res.ok, data: text, status: res.status };
+      }
+    }
+
+    async function fetchBrand() {
+      const website_url = getUrl();
+      if (!website_url) { alert('Please enter a URL'); return; }
+      setBusy(true); statusEl.textContent = 'Fetching brand context…';
+      out.textContent = 'Fetching…';
+      try {
+        const r = await postJSON('/api/brand-context', { website_url });
+        statusEl.textContent = `Status ${r.status}`;
+        out.textContent = pretty(r.data);
+      } catch (e) {
+        statusEl.textContent = 'Error';
+        out.textContent = 'Error: ' + e.message;
+      } finally { setBusy(false); }
+    }
+
+    async function fetchAndSave() {
+      const website_url = getUrl();
+      if (!website_url) { alert('Please enter a URL'); return; }
+      setBusy(true); statusEl.textContent = 'Fetching and saving snapshot…';
+      out.textContent = 'Fetching…';
+      try {
+        const r = await postJSON('/api/brand-context/save', { website_url });
+        statusEl.textContent = `Saved snapshot for ${r.data?.store?.url || website_url} (status ${r.status})`;
+        out.textContent = pretty(r.data);
+      } catch (e) {
+        statusEl.textContent = 'Error';
+        out.textContent = 'Error: ' + e.message;
+      } finally { setBusy(false); }
+    }
+
+    async function fetchCompetitors(options={}) {
+      const website_url = getUrl();
+      if (!website_url) { alert('Please enter a URL'); return; }
+      const limit = options.limit ?? getLimit();
+      const loose = options.loose ?? getLoose();
+
+      setBusy(true);
+      statusEl.textContent = `Finding competitors (limit=${limit}, loose=${loose})…`;
+      out.textContent = 'Fetching…';
+      try {
+        const r = await postJSON('/api/competitors', { website_url, limit, loose });
+        statusEl.textContent = `Status ${r.status} — found ${Array.isArray(r.data?.competitors) ? r.data.competitors.length : 0}`;
+        out.textContent = pretty(r.data);
+      } catch (e) {
+        statusEl.textContent = 'Error';
+        out.textContent = 'Error: ' + e.message;
+      } finally { setBusy(false); }
+    }
+
+    // Wire up buttons
+    $('#btnFetch').onclick = fetchBrand;
+    $('#btnSave').onclick = fetchAndSave;
+    $('#btnCompStrict').onclick = () => fetchCompetitors({ loose:false });
+    $('#btnCompLoose').onclick  = () => fetchCompetitors({ loose:true });
+
+    // Enter key submits "Fetch brand"
+    $('#url').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') fetchBrand();
+    });
+  </script>
+</body>
+</html>
